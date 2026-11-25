@@ -1,25 +1,26 @@
-// Token Launch Radar — entry for make.fun's token-radar-01 bounty.
+// Token Launch Radar — make.fun's token-radar-01 bounty.
 //
-// One Node 22 program, the standard library only. It reads the sealed snapshot at /input/snapshot.json,
-// prices every protocol that records no token, and writes:
+// One Node 22 program, standard library only. It reads the sealed snapshot, prices every
+// protocol that records no token, and writes:
 //
-//   /output/board.json      the ranked board the gate reads (rank, implied value, farm plan per row)
-//   /output/data.js         the dashboard's whole dataset, as one script (window.RADAR)
-//   /output/dashboard/      the static page (index.html, app.css, app.js), copied from this repository
-//   /output/screenshots/    the three screenshots, copied from this repository
-//   /output/dossier.json    what the judge reads, written with buildDossier from vendor/makefun-board.ts
+//   board.json      the ranked board the gate reads (rank, implied value, farm plan per row)
+//   data.js         the dashboard's whole dataset, as one script (window.RADAR)
+//   dashboard/      the static page (index.html, app.css, app.js), copied from this repository
+//   screenshots/    the three screenshots, copied from this repository
+//   dossier.json    the judge's packet, built with buildDossier from vendor/makefun-board.ts
 //
-// The value model is calibrated from the snapshot itself: a protocol's implied value is its TVL
-// multiplied by the median market-cap-to-TVL multiple of the live tokens in its own category, then by a
-// seven-day momentum factor and a tenure factor. No protocol is named anywhere in the code. A second
-// score, launch pressure, states how likely a launch looks from the same five fields; it never touches
-// the implied value.
+// The value model is calibrated from the snapshot itself. A protocol's implied value is its TVL
+// times the median market-cap-to-TVL multiple of the live tokens in its own category, times a
+// seven-day momentum factor, times a tenure factor. No protocol is named anywhere in the code.
+// Launch pressure is a second score — how likely a launch looks from the same five fields —
+// and it never touches the implied value.
 //
 // Outside the grader's container:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-kit/token-radar-01-kit/input/snapshot.json
-// Screenshots (a browser is needed, never required by the graded run):
+// Re-render the screenshots (a browser is needed; the graded run never does this, and the
+// screenshots it grades are the ones this repository already carries):
 //   MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot> --shots
-// Browse it:
+// Browse the page:
 //   MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot> --serve 8080
 
 import { spawnSync } from 'node:child_process';
@@ -31,18 +32,19 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-board.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
+const rootDir = fileURLToPath(new URL('.', import.meta.url));
 
-// ------------------------------------------------------------------ arguments
+// ------------------------------------------------------------------ command line
 
-function arg(name: string, fallback: string): string {
+/** The value after `--name value`, or after `--name=value`, or the fallback when neither is given. */
+function cliValue(name: string, fallback: string): string {
   const at = process.argv.indexOf(`--${name}`);
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
   const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
   return eq === undefined ? fallback : eq.slice(name.length + 3);
 }
 
-const hasFlag = (name: string): boolean => process.argv.includes(`--${name}`);
+const cliFlag = (name: string): boolean => process.argv.includes(`--${name}`);
 
 // ------------------------------------------------------------------ the snapshot
 
@@ -67,28 +69,29 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-class SnapshotError extends Error {}
+class BadSnapshot extends Error {}
 
-function parseSnapshot(text: string): Snapshot {
+/** Read and validate the sealed snapshot; anything malformed is a hard failure, not a guess. */
+function readSnapshot(text: string): Snapshot {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new SnapshotError('snapshot.json is not JSON');
+    throw new BadSnapshot('snapshot.json is not JSON');
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SnapshotError('snapshot.json is not an object');
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new BadSnapshot('snapshot.json is not an object');
   const o = raw as Record<string, unknown>;
-  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new SnapshotError('snapshot.json has no as_of date');
-  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
-  if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
-  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist');
+  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new BadSnapshot('snapshot.json has no as_of date');
+  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new BadSnapshot('snapshot.json has no floor_usd');
+  if (!Array.isArray(o.protocols)) throw new BadSnapshot('snapshot.json has no protocols array');
+  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new BadSnapshot('snapshot.json has no watchlist');
   const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
   const protocols: Protocol[] = (o.protocols as unknown[]).map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`protocol ${i} is not an object`);
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new BadSnapshot(`protocol ${i} is not an object`);
     const p = v as Record<string, unknown>;
     if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`protocol ${i} lacks a slug, a name or a TVL`);
+      throw new BadSnapshot(`protocol ${i} lacks a slug, a name or a TVL`);
     }
     return {
       slug: p.slug,
@@ -135,55 +138,56 @@ export const MODEL = {
 /** The launch pressure at which the page calls a protocol a hot launch (its own scale, not the gate's). */
 export const HOT_PRESSURE = 60;
 
-const DAY_MS = 86_400_000;
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
-const round = (v: number, places: number): number => {
+const MS_PER_DAY = 86_400_000;
+const clampTo = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+const roundTo = (v: number, places: number): number => {
   const f = 10 ** places;
   return Math.round(v * f) / f;
 };
-const median = (xs: number[]): number => {
+const medianOf = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
   return s.length % 2 === 1 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
 /** A protocol records a token when DefiLlama carries either of its two token fields. */
-export function recordsToken(p: Protocol): boolean {
+export function hasToken(p: Protocol): boolean {
   return p.gecko_id !== null || p.symbol !== null;
 }
 
 /** DefiLlama's version marker: a name ending in a release belongs to another protocol's pool. */
-const VERSIONED_NAME = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
+const VERSION_SUFFIX = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
 
 /** Categories whose members are a bridged, staked or custodial form of an asset that already trades. */
-const FORMED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX']);
+const DERIVED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX']);
 /** A name carrying one of these words is a wrapped or staked product, whatever its record says. */
-const FORMED_NAME = /\b(wrapped|staked|staking)\b/i;
+const DERIVED_NAME = /\b(wrapped|staked|staking)\b/i;
 /** A protocol named after an exchange is that exchange's product, not an independent launch. */
-const EXCHANGE_PREFIXES = ['Binance', 'Coinbase', 'Bybit', 'Kraken', 'Bitget', 'OKX', 'Bitfinex', 'Gemini'];
+const EXCHANGE_NAMES = ['Binance', 'Coinbase', 'Bybit', 'Kraken', 'Bitget', 'OKX', 'Bitfinex', 'Gemini'];
 
 /**
- * Whether a protocol is a subject the radar may rank: it records no token, and it is not the bridged,
- * wrapped or staked form of a coin that already trades. This is the house's own watchlist rule, applied
- * to the whole snapshot rather than only above its floor: WBTC is Bitcoin on Ethereum and Binance staked
- * ETH is ETH in a staking product, so neither is a protocol waiting on a launch of its own. Every
- * protocol the house's watchlist names passes it, which is why the board covers the watchlist by construction.
+ * Whether a protocol is a subject the radar may rank: it records no token, and it is not the
+ * bridged, wrapped or staked form of a coin that already trades. This is the house's own watchlist
+ * rule, applied to the whole snapshot rather than only above its floor: WBTC is Bitcoin on
+ * Ethereum and Binance staked ETH is ETH in a staking product, so neither is a protocol waiting
+ * on a launch of its own. Every protocol the house's watchlist names passes it, which is why the
+ * board covers the watchlist by construction.
  */
-function isSubject(p: Protocol): boolean {
-  if (recordsToken(p)) return false;
-  if (p.category !== null && FORMED_CATEGORIES.has(p.category)) return false;
-  if (VERSIONED_NAME.test(p.name)) return false;
-  if (FORMED_NAME.test(p.name)) return false;
-  return !EXCHANGE_PREFIXES.some((prefix) => p.name.startsWith(prefix));
+function isCandidate(p: Protocol): boolean {
+  if (hasToken(p)) return false;
+  if (p.category !== null && DERIVED_CATEGORIES.has(p.category)) return false;
+  if (VERSION_SUFFIX.test(p.name)) return false;
+  if (DERIVED_NAME.test(p.name)) return false;
+  return !EXCHANGE_NAMES.some((prefix) => p.name.startsWith(prefix));
 }
 
 /** Whole days from the snapshot's day to the day DefiLlama began tracking the protocol. */
-function ageDays(asOf: string, listedAt: string | null): number | null {
+function listedAgeDays(asOf: string, listedAt: string | null): number | null {
   if (listedAt === null) return null;
   const a = Date.parse(`${asOf}T00:00:00Z`);
   const b = Date.parse(`${listedAt}T00:00:00Z`);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return Math.max(0, Math.floor((a - b) / DAY_MS));
+  return Math.max(0, Math.floor((a - b) / MS_PER_DAY));
 }
 
 export interface CategoryMultiple {
@@ -202,11 +206,12 @@ export interface Calibration {
 }
 
 /**
- * The peer multiple: what the market pays for TVL, in the protocol's own category. Every live-token
- * protocol in the snapshot with a market cap and a TVL contributes market cap / TVL; a category needs
- * MODEL.peer_min_samples of them to speak for itself, and the market-wide median stands in otherwise.
+ * The peer multiple: what the market pays for TVL, in the protocol's own category. Every
+ * live-token protocol in the snapshot with a market cap and a TVL contributes market cap / TVL;
+ * a category needs MODEL.peer_min_samples of them to speak for itself, and the market-wide
+ * median stands in otherwise.
  */
-function calibrate(protocols: Protocol[]): Calibration {
+function calibratePeers(protocols: Protocol[]): Calibration {
   const ratios: { category: string | null; ratio: number }[] = [];
   for (const p of protocols) {
     if (p.mcap_usd === null || p.tvl_usd <= 0 || p.mcap_usd <= 0) continue;
@@ -214,7 +219,7 @@ function calibrate(protocols: Protocol[]): Calibration {
     if (!Number.isFinite(ratio) || ratio <= 0.005 || ratio > 200) continue;
     ratios.push({ category: p.category, ratio });
   }
-  const marketMult = clamp(median(ratios.map((r) => r.ratio)), MODEL.peer_mult_floor, MODEL.peer_mult_cap);
+  const marketMult = clampTo(medianOf(ratios.map((r) => r.ratio)), MODEL.peer_mult_floor, MODEL.peer_mult_cap);
   const byCategory = new Map<string, number[]>();
   for (const r of ratios) {
     if (r.category === null) continue;
@@ -225,14 +230,14 @@ function calibrate(protocols: Protocol[]): Calibration {
   const categories: CategoryMultiple[] = [...byCategory.entries()]
     .map(([category, xs]) => {
       const own = xs.length >= MODEL.peer_min_samples;
-      const multiple = clamp(own ? median(xs) : marketMult, MODEL.peer_mult_floor, MODEL.peer_mult_cap);
-      return { category, multiple: round(multiple, 4), samples: xs.length, basis: own ? ('category' as const) : ('market' as const) };
+      const multiple = clampTo(own ? medianOf(xs) : marketMult, MODEL.peer_mult_floor, MODEL.peer_mult_cap);
+      return { category, multiple: roundTo(multiple, 4), samples: xs.length, basis: own ? ('category' as const) : ('market' as const) };
     })
     .sort((a, b) => b.samples - a.samples || (a.category < b.category ? -1 : 1));
-  return { market: { multiple: round(marketMult, 4), samples: ratios.length }, categories, instruments: ratios.length };
+  return { market: { multiple: roundTo(marketMult, 4), samples: ratios.length }, categories, instruments: ratios.length };
 }
 
-function peerMultiple(cal: Calibration, category: string | null): CategoryMultiple {
+function peerFor(cal: Calibration, category: string | null): CategoryMultiple {
   if (category !== null) {
     const hit = cal.categories.find((c) => c.category === category);
     if (hit !== undefined && hit.basis === 'category') return hit;
@@ -254,55 +259,56 @@ export interface Scored {
 }
 
 /** The value one protocol's launch would carry, if its record stays as it is. */
-function score(p: Protocol, asOf: string, cal: Calibration): Scored {
-  const age = ageDays(asOf, p.listed_at);
-  const growth = clamp(p.change_7d ?? 0, MODEL.momentum_floor, MODEL.momentum_cap);
-  const momentumMultiplier = clamp(1 + (growth / 100) * MODEL.momentum_weight, MODEL.momentum_mult_floor, MODEL.momentum_mult_cap);
+function scoreOne(p: Protocol, asOf: string, cal: Calibration): Scored {
+  const age = listedAgeDays(asOf, p.listed_at);
+  const growth = clampTo(p.change_7d ?? 0, MODEL.momentum_floor, MODEL.momentum_cap);
+  const momentumMultiplier = clampTo(1 + (growth / 100) * MODEL.momentum_weight, MODEL.momentum_mult_floor, MODEL.momentum_mult_cap);
   const ageForModel = age ?? MODEL.unknown_age_days;
-  const tenureMultiplier = MODEL.tenure_floor + (clamp(ageForModel, 0, MODEL.tenure_days) / MODEL.tenure_days) * MODEL.tenure_range;
-  const peer = peerMultiple(cal, p.category);
+  const tenureMultiplier = MODEL.tenure_floor + (clampTo(ageForModel, 0, MODEL.tenure_days) / MODEL.tenure_days) * MODEL.tenure_range;
+  const peer = peerFor(cal, p.category);
   const raw = p.tvl_usd * peer.multiple * momentumMultiplier * tenureMultiplier;
   const implied = Math.max(1, Math.min(MODEL.value_cap_usd, Math.round(raw)));
   return {
     protocol: p,
     implied,
     age,
-    momentum: round(growth, 4),
-    momentum_mult: round(momentumMultiplier, 4),
-    tenure_mult: round(tenureMultiplier, 4),
+    momentum: roundTo(growth, 4),
+    momentum_mult: roundTo(momentumMultiplier, 4),
+    tenure_mult: roundTo(tenureMultiplier, 4),
     peer,
-    multiple: round(implied / Math.max(1, p.tvl_usd), 4),
+    multiple: roundTo(implied / Math.max(1, p.tvl_usd), 4),
     pressure: 0,
     pressure_parts: { size: 0, category: 0, tenure: 0, momentum: 0 },
   };
 }
 
 /**
- * Launch pressure, 0 to 100: how likely a launch looks from the same five fields the value model reads,
- * never from a name. It is the size of the protocol against the whole pre-token field, the share of its
- * own category that already trades a token, how long it has run without one, and its recent growth. It is
- * shown beside the implied value and drives the page's hot filter; it never changes the implied value.
+ * Launch pressure, 0 to 100: how likely a launch looks from the same five fields the value
+ * model reads, never from a name. It is the size of the protocol against the whole pre-token
+ * field, the share of its own category that already trades a token, how long it has run without
+ * one, and its recent growth. It is shown beside the implied value and drives the page's hot
+ * filter; it never changes the implied value.
  */
-function pressureFor(p: Protocol, age: number | null, sizeRank: number, catTokenRate: Map<string, number>): { score: number; parts: { size: number; category: number; tenure: number; momentum: number } } {
-  const size = clamp(sizeRank, 0, 1);
-  const category = clamp(catTokenRate.get(p.category ?? '') ?? 0.5, 0, 1);
-  const tenure = clamp((age ?? MODEL.unknown_age_days) / 1095, 0, 1);
-  const momentum = clamp(((p.change_7d ?? 0) + 15) / 45, 0, 1);
+function launchPressure(p: Protocol, age: number | null, sizeRank: number, catTokenRate: Map<string, number>): { score: number; parts: { size: number; category: number; tenure: number; momentum: number } } {
+  const size = clampTo(sizeRank, 0, 1);
+  const category = clampTo(catTokenRate.get(p.category ?? '') ?? 0.5, 0, 1);
+  const tenure = clampTo((age ?? MODEL.unknown_age_days) / 1095, 0, 1);
+  const momentum = clampTo(((p.change_7d ?? 0) + 15) / 45, 0, 1);
   const score = 100 * (0.32 * size + 0.24 * category + 0.24 * tenure + 0.2 * momentum);
   return {
-    score: Math.round(clamp(score, 0, 100)),
-    parts: { size: round(size, 3), category: round(category, 3), tenure: round(tenure, 3), momentum: round(momentum, 3) },
+    score: Math.round(clampTo(score, 0, 100)),
+    parts: { size: roundTo(size, 3), category: roundTo(category, 3), tenure: roundTo(tenure, 3), momentum: roundTo(momentum, 3) },
   };
 }
 
 /** How much of one category already trades a token: the share of its protocols DefiLlama records a token for. */
-function categoryTokenRate(protocols: Protocol[]): Map<string, number> {
+function tokenShareByCategory(protocols: Protocol[]): Map<string, number> {
   const total = new Map<string, number>();
   const live = new Map<string, number>();
   for (const p of protocols) {
     if (p.category === null) continue;
     total.set(p.category, (total.get(p.category) ?? 0) + 1);
-    if (recordsToken(p)) live.set(p.category, (live.get(p.category) ?? 0) + 1);
+    if (hasToken(p)) live.set(p.category, (live.get(p.category) ?? 0) + 1);
   }
   const rate = new Map<string, number>();
   for (const [c, n] of total) rate.set(c, (live.get(c) ?? 0) / n);
@@ -311,7 +317,7 @@ function categoryTokenRate(protocols: Protocol[]): Map<string, number> {
 
 // ------------------------------------------------------------------ the farm plan
 
-function chainName(p: Protocol): string {
+function mainChain(p: Protocol): string {
   return p.chains.length > 0 ? p.chains[0]! : 'its main chain';
 }
 
@@ -323,7 +329,7 @@ function capitalFor(tvl: number): number {
   return 50;
 }
 
-function holdDays(age: number | null): number {
+function holdDaysFor(age: number | null): number {
   if (age === null) return 30;
   if (age < 180) return 60;
   if (age < 365) return 45;
@@ -331,7 +337,7 @@ function holdDays(age: number | null): number {
 }
 
 /** The one action that makes a wallet count, in the protocol's own words, from its category. */
-function actionFor(p: Protocol, capital: number, chain: string): string {
+function primaryAction(p: Protocol, capital: number, chain: string): string {
   const c = (p.category ?? '').toLowerCase();
   const n = p.name;
   if (c.includes('lend') || c.includes('cdp') || c.includes('collateral') || c.includes('credit')) {
@@ -371,8 +377,8 @@ function actionFor(p: Protocol, capital: number, chain: string): string {
 }
 
 /**
- * A protocol's farm plan: six steps, each with what it costs and how long it takes, derived from the
- * protocol's own record (category, first chain, TVL, age). No step is written per name.
+ * A protocol's farm plan: six steps, each with what it costs and how long it takes, derived
+ * from the protocol's own record (category, first chain, TVL, age). No step is written per name.
  */
 export interface FarmPlan {
   steps: string[];
@@ -380,15 +386,15 @@ export interface FarmPlan {
   budget: { capital_usd: number; gas_low_usd: number; gas_high_usd: number; minutes: number; days: number; weeks: number };
 }
 
-function farmPlan(p: Protocol, age: number | null): FarmPlan {
-  const chain = chainName(p);
+function farmPlanFor(p: Protocol, age: number | null): FarmPlan {
+  const chain = mainChain(p);
   const capital = capitalFor(p.tvl_usd);
-  const hold = holdDays(age);
+  const hold = holdDaysFor(age);
   const weeks = hold >= 45 ? 6 : 4;
   const gas = capital >= 150 ? 8 : 4;
   const steps = [
     `Open a wallet on ${chain} that holds only the capital you plan to farm, fund it with $${capital + 20} of USDC, and keep its seed phrase off this machine. Cost: about $1 to $2 of gas to fund it. Time: 5 minutes.`,
-    actionFor(p, capital, chain) + ` Cost: $${capital} of capital and roughly $${gas} of gas. Time: 15 minutes to set up.`,
+    primaryAction(p, capital, chain) + ` Cost: $${capital} of capital and roughly $${gas} of gas. Time: 15 minutes to set up.`,
     `Repeat one qualifying action each week for ${weeks} weeks: add to the position, borrow and repay, swap through the protocol, or vote with the position you already hold. Cost: about $2 to $4 of gas a week. Time: 10 minutes a week.`,
     `Keep the position open for at least ${hold} days, so that several weekly readings of ${p.name}'s TVL see your wallet and not a single snapshot. Cost: the $${capital} stays locked in the position. Time: ${hold} days.`,
     `Before you withdraw, read ${p.name}'s own docs and points page for the launch terms, and claim only from the domain those docs name. Cost: nothing to check, and never pay to claim. Time: 10 minutes.`,
@@ -500,12 +506,12 @@ export interface Radar {
   live: LiveRow[];
 }
 
-function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
-  const cal = calibrate(snapshot.protocols);
-  const rates = categoryTokenRate(snapshot.protocols);
+function buildBoardAndRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
+  const cal = calibratePeers(snapshot.protocols);
+  const rates = tokenShareByCategory(snapshot.protocols);
   const watch = new Set(snapshot.watchlist);
-  const tokenless = snapshot.protocols.filter((p) => !recordsToken(p));
-  const subjects = tokenless.filter(isSubject);
+  const tokenless = snapshot.protocols.filter((p) => !hasToken(p));
+  const subjects = tokenless.filter(isCandidate);
   // The size component of launch pressure: where the protocol's TVL falls in the pre-token field.
   const tvlAscending = subjects.map((p) => p.tvl_usd).sort((a, b) => a - b);
   const sizeRank = (tvl: number): number => {
@@ -520,8 +526,8 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
   };
 
   const scored = subjects.map((p) => {
-    const s = score(p, snapshot.as_of, cal);
-    const pr = pressureFor(p, s.age, sizeRank(p.tvl_usd), rates);
+    const s = scoreOne(p, snapshot.as_of, cal);
+    const pr = launchPressure(p, s.age, sizeRank(p.tvl_usd), rates);
     s.pressure = pr.score;
     s.pressure_parts = pr.parts;
     return s;
@@ -529,35 +535,35 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
   scored.sort((a, b) => b.implied - a.implied || (a.protocol.slug < b.protocol.slug ? -1 : a.protocol.slug > b.protocol.slug ? 1 : 0));
 
   const board: BoardRow[] = scored.map((s, i) => {
-    const plan = farmPlan(s.protocol, s.age);
-    return ({
-    rank: i + 1,
-    slug: s.protocol.slug,
-    name: s.protocol.name,
-    category: s.protocol.category,
-    chains: s.protocol.chains,
-    tvl_usd: s.protocol.tvl_usd,
-    change_7d: s.protocol.change_7d,
-    mcap_usd: s.protocol.mcap_usd,
-    listed_at: s.protocol.listed_at,
-    gecko_id: s.protocol.gecko_id,
-    symbol: s.protocol.symbol,
-    token_status: 'pre-token',
-    age_days: s.age,
-    implied_value_usd: s.implied,
-    model: {
-      version: MODEL.version,
-      peer_multiple: s.peer.multiple,
-      peer_basis: s.peer.basis,
-      peer_samples: s.peer.samples,
-      momentum_pct: s.momentum,
-      momentum_multiplier: s.momentum_mult,
-      tenure_multiplier: s.tenure_mult,
-    },
-    launch_pressure: s.pressure,
-    farm_steps: plan.steps,
-    plan: plan.budget,
-  });
+    const plan = farmPlanFor(s.protocol, s.age);
+    return {
+      rank: i + 1,
+      slug: s.protocol.slug,
+      name: s.protocol.name,
+      category: s.protocol.category,
+      chains: s.protocol.chains,
+      tvl_usd: s.protocol.tvl_usd,
+      change_7d: s.protocol.change_7d,
+      mcap_usd: s.protocol.mcap_usd,
+      listed_at: s.protocol.listed_at,
+      gecko_id: s.protocol.gecko_id,
+      symbol: s.protocol.symbol,
+      token_status: 'pre-token',
+      age_days: s.age,
+      implied_value_usd: s.implied,
+      model: {
+        version: MODEL.version,
+        peer_multiple: s.peer.multiple,
+        peer_basis: s.peer.basis,
+        peer_samples: s.peer.samples,
+        momentum_pct: s.momentum,
+        momentum_multiplier: s.momentum_mult,
+        tenure_multiplier: s.tenure_mult,
+      },
+      launch_pressure: s.pressure,
+      farm_steps: plan.steps,
+      plan: plan.budget,
+    };
   });
 
   const rows: RadarRow[] = board.map((r, i) => {
@@ -587,7 +593,7 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
   });
 
   const live: LiveRow[] = snapshot.protocols
-    .filter((p) => recordsToken(p) && p.category !== 'CEX' && p.tvl_usd > 0)
+    .filter((p) => hasToken(p) && p.category !== 'CEX' && p.tvl_usd > 0)
     .sort((a, b) => (b.mcap_usd ?? 0) - (a.mcap_usd ?? 0) || b.tvl_usd - a.tvl_usd)
     .slice(0, 60)
     .map((p) => ({
@@ -598,7 +604,7 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
       tvl_usd: p.tvl_usd,
       mcap_usd: p.mcap_usd,
       change_7d: p.change_7d,
-      multiple: p.mcap_usd === null ? null : round(p.mcap_usd / Math.max(1, p.tvl_usd), 4),
+      multiple: p.mcap_usd === null ? null : roundTo(p.mcap_usd / Math.max(1, p.tvl_usd), 4),
     }));
 
   const implied = board.map((r) => r.implied_value_usd).sort((a, b) => a - b);
@@ -614,7 +620,7 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
       protocols: snapshot.protocols.length,
       pretoken: subjects.length,
       set_aside: tokenless.length - subjects.length,
-      live: snapshot.protocols.filter((p) => recordsToken(p)).length,
+      live: snapshot.protocols.filter((p) => hasToken(p)).length,
       live_shown: live.length,
       watchlist: snapshot.watchlist.length,
       watchlist_covered: covered,
@@ -634,7 +640,7 @@ function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
 }
 
 /** Why a board is not one the gate will take, or null. */
-function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
+function boardProblem(board: BoardRow[], snapshot: Snapshot): string | null {
   if (board.length < 100 || board.length > 4000) return `the board holds ${board.length} rows`;
   const slugs = new Set(board.map((r) => r.slug));
   const missing = snapshot.watchlist.filter((s) => !slugs.has(s));
@@ -659,7 +665,7 @@ const SCREENSHOT_CAPS = { max: 4, max_bytes: 512 * 1024 };
 const DASHBOARD_CAPS = { max_files: 400, max_bytes: 4 * 1024 * 1024 };
 const PLAIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 
-function copyPlainFiles(from: string, to: string): string[] {
+function copyPlain(from: string, to: string): string[] {
   if (!existsSync(from)) return [];
   mkdirSync(to, { recursive: true });
   const copied: string[] = [];
@@ -674,7 +680,7 @@ function copyPlainFiles(from: string, to: string): string[] {
 }
 
 /** A browser that opens a local file and writes a PNG: --browser, $MAKEFUN_BROWSER, Playwright's cache, then PATH. */
-function findBrowser(explicit: string | null): string | null {
+function locateBrowser(explicit: string | null): string | null {
   const ok = (p: string): string | null => (p !== '' && existsSync(p) ? p : null);
   if (explicit !== null) return ok(explicit);
   if (process.env.MAKEFUN_BROWSER) return ok(process.env.MAKEFUN_BROWSER);
@@ -706,7 +712,7 @@ interface Shot {
 }
 
 /** The three views the bounty asks for: the board, a protocol's detail view, a filtered view. */
-function shotPlan(radar: Radar): Shot[] {
+function planShots(radar: Radar): Shot[] {
   // The detail view: the protocol under the most launch pressure, so the screen shows the model at work.
   const detail = [...radar.rows].sort((a, b) => b.launch_pressure - a.launch_pressure || a.rank - b.rank)[0]!;
   // The filtered view: the detail protocol's category, narrowed again to hot launches when that leaves rows.
@@ -721,7 +727,7 @@ function shotPlan(radar: Radar): Shot[] {
   ];
 }
 
-function capture(browser: string, pageUrl: string, outPng: string): boolean {
+function shoot(browser: string, pageUrl: string, outPng: string): boolean {
   const args = [
     '--headless',
     '--disable-gpu',
@@ -742,12 +748,12 @@ function capture(browser: string, pageUrl: string, outPng: string): boolean {
   return existsSync(outPng) && statSync(outPng).size > 10_000;
 }
 
-async function serve(dir: string, port: number): Promise<void> {
+async function serveDir(dir: string, port: number): Promise<void> {
   const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     let path = decodeURIComponent(url.pathname);
-    if (path === '/' ) path = '/dashboard/index.html';
+    if (path === '/') path = '/dashboard/index.html';
     const full = normalize(join(dir, path));
     if (!full.startsWith(normalize(dir + sep)) || !existsSync(full) || !statSync(full).isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain' });
@@ -763,18 +769,18 @@ async function serve(dir: string, port: number): Promise<void> {
 
 // ------------------------------------------------------------------ main
 
-async function main(): Promise<void> {
-  const inputArg = arg('input', '/input');
+async function run(): Promise<void> {
+  const inputArg = cliValue('input', '/input');
   const inputFile = inputArg.endsWith('.json') ? inputArg : join(inputArg, 'snapshot.json');
   if (!existsSync(inputFile)) {
     process.stderr.write(`token radar: no snapshot at ${inputFile}: pass --input <snapshot.json|directory>\n`);
     process.exit(2);
   }
-  const out = resolve(arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output'));
-  const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
+  const out = resolve(cliValue('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output'));
+  const snapshot = readSnapshot(readFileSync(inputFile, 'utf8'));
 
-  const { board, radar } = buildRadar(snapshot);
-  const issue = boardIssue(board, snapshot);
+  const { board, radar } = buildBoardAndRadar(snapshot);
+  const issue = boardProblem(board, snapshot);
   if (issue !== null) {
     process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
     process.exit(1);
@@ -784,21 +790,21 @@ async function main(): Promise<void> {
   const boardJson = `${JSON.stringify({ model: MODEL, as_of: snapshot.as_of, rows: board })}\n`;
   writeFileSync(join(out, 'board.json'), boardJson);
   writeFileSync(join(out, 'data.js'), `window.RADAR=${JSON.stringify(radar)};\n`);
-  copyPlainFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+  copyPlain(join(rootDir, 'dashboard'), join(out, 'dashboard'));
 
   // Screenshots: rendered now when a browser is asked for, otherwise taken from this repository.
-  if (hasFlag('shots')) {
-    const browser = findBrowser(arg('browser', '') === '' ? null : arg('browser', ''));
+  if (cliFlag('shots')) {
+    const browser = locateBrowser(cliValue('browser', '') === '' ? null : cliValue('browser', ''));
     if (browser === null) {
       process.stderr.write('token radar: no browser found: pass --browser <path> or set MAKEFUN_BROWSER\n');
       process.exit(3);
     }
-    const shotsDir = join(here, 'screenshots');
+    const shotsDir = join(rootDir, 'screenshots');
     mkdirSync(shotsDir, { recursive: true });
     const page = `file://${join(out, 'dashboard', 'index.html')}`;
-    for (const shot of shotPlan(radar)) {
+    for (const shot of planShots(radar)) {
       const file = join(shotsDir, shot.file);
-      if (!capture(browser, `${page}${shot.hash}`, file)) {
+      if (!shoot(browser, `${page}${shot.hash}`, file)) {
         process.stderr.write(`token radar: ${shot.file} (${shot.note}) was not written\n`);
         process.exit(3);
       }
@@ -806,7 +812,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const shots = copyPlainFiles(join(here, 'screenshots'), join(out, 'screenshots'));
+  const shots = copyPlain(join(rootDir, 'screenshots'), join(out, 'screenshots'));
   if (shots.length < 3) {
     process.stderr.write(`token radar: screenshots/ holds ${shots.length} images: the bounty wants 3\n`);
     process.exit(1);
@@ -829,7 +835,7 @@ async function main(): Promise<void> {
       `token radar: wrote board.json (${boardBytes} B, ${boardHash}), data.js, dashboard/ (3 files), screenshots/ (${shots.length}), dossier.json (${dossierBytes} B)\n`,
   );
 
-  if (hasFlag('serve')) await serve(out, Number(arg('port', '8080')));
+  if (cliFlag('serve')) await serveDir(out, Number(cliValue('port', '8080')));
 }
 
-await main();
+await run();

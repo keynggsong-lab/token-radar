@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Launch Radar — protocols with no token, ranked by what a launch would be worth</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#board">Skip to the board</a>
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="20" />
+      <circle cx="24" cy="24" r="13" />
+      <circle cx="24" cy="24" r="6" />
+      <path class="sweep" d="M24 24 L24 4 A20 20 0 0 1 41.3 14 Z" />
+      <path class="blip" d="M33 15.5 l1.6 1.6 -1.6 1.6 -1.6 -1.6 Z" />
+    </svg>
+    <div>
+      <h1>Token Launch Radar</h1>
+      <p class="tag">Protocols that record no token, ranked by what their launch would be worth — and the steps to farm each one.</p>
+    </div>
+  </div>
+  <div class="head-meta">
+    <div class="chip"><span class="k">snapshot</span><span class="v" id="meta-date">—</span></div>
+    <div class="chip"><span class="k">model</span><span class="v" id="meta-model">—</span></div>
+    <div class="chip"><span class="k">watchlist</span><span class="v" id="meta-watch">—</span></div>
+  </div>
+</header>
+
+<section class="strip" id="stats" aria-label="Snapshot figures"></section>
+
+<div class="controls">
+  <div class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="pre" class="tab">Pre-token <b id="n-pre">0</b></button>
+    <button role="tab" data-tab="watch" class="tab">Watchlist <b id="n-watch">0</b></button>
+    <button role="tab" data-tab="hot" class="tab">Hot <span class="thr">≥<span id="hot-thresh">60</span></span> <b id="n-hot">0</b></button>
+    <button role="tab" data-tab="live" class="tab">Already trading <b id="n-live">0</b></button>
+  </div>
+  <div class="fields">
+    <label class="field">
+      <span class="k">search</span>
+      <input id="q" type="search" placeholder="name, slug or chain" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="field">
+      <span class="k">category</span>
+      <select id="cat"><option value="">all categories</option></select>
+    </label>
+    <label class="field">
+      <span class="k">chain</span>
+      <select id="chain"><option value="">all chains</option></select>
+    </label>
+    <label class="field">
+      <span class="k">sort</span>
+      <select id="sort">
+        <option value="rank">implied value</option>
+        <option value="pressure">launch pressure</option>
+        <option value="multiple">multiple on TVL</option>
+        <option value="tvl">TVL</option>
+        <option value="change">7-day change</option>
+        <option value="age">years without a token</option>
+        <option value="name">name</option>
+      </select>
+    </label>
+    <button id="clear" class="clear" type="button">Reset</button>
+  </div>
+</div>
+
+<div class="applied" id="applied" hidden></div>
+
+<main id="board" tabindex="-1" aria-busy="false">
+  <table class="board" id="table">
+    <thead id="head"></thead>
+    <tbody id="body"></tbody>
+  </table>
+  <p class="empty" id="empty" hidden>No protocol matches these filters. Widen the category or clear the search.</p>
+  <div class="foot" id="foot"></div>
+</main>
+
+<aside id="detail" class="detail" aria-hidden="true" aria-label="Protocol detail"></aside>
+<div id="scrim" class="scrim" hidden></div>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

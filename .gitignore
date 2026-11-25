@@ -1,0 +1,4 @@
+out/
+out2/
+*.log
+node_modules/
